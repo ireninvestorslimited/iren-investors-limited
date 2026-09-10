@@ -347,7 +347,6 @@ body{background:#000!important;color:#f4f8fa!important}
 <div class="wallet-item"><div><span>Account status</span><br/><strong>Active account</strong></div><span>✓</span></div>
 <div class="wallet-item"><div><span>Referral</span><br/><strong>Available</strong></div><span>›</span></div>
 <div class="wallet-item"><div><span>Support</span><br/><strong>Contact support</strong></div><span>›</span></div>
-<div class="wallet-item" id="iren-admin-link"><div><span>Administrator</span><br/><strong>Open Admin Dashboard</strong></div><button onclick="location.href='admin.html'" style="padding:9px 12px;border:0;border-radius:10px;background:#087d6d;color:#fff;font-weight:700">Open</button></div>
 </div></section>
 </div>
 </div>
@@ -618,6 +617,13 @@ projectGroup('A IREN',document.querySelector('.project-filter .project-bar-btn')
 
   window.submitAuth=async function(){
     showError('');
+    if(!client){
+      try{
+        if(!configured()) throw new Error('Supabase configuration is missing. Please upload config.js.');
+        if(!window.supabase || !window.supabase.createClient) throw new Error('Supabase library did not load. Refresh the page and try again.');
+        client=window.supabase.createClient(cfg.supabaseUrl,cfg.supabaseAnonKey);
+      }catch(e){ showError(e.message||'Secure login is not ready. Please refresh the page.'); return; }
+    }
     const email=document.getElementById('iren-email').value.trim();
     const password=document.getElementById('iren-password').value;
     try{
