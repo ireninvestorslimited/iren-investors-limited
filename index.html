@@ -165,9 +165,49 @@ body{background:#000!important;color:#f4f8fa!important}
 .tab{display:none}.tab.active{display:block}
 @media(max-width:800px){.home-hero,.about-home,.home-section,.projects-page{margin-left:16px;margin-right:16px;padding-left:18px;padding-right:18px}.home-tools,.home-feature-grid{grid-template-columns:1fr}.home-hero h1{font-size:34px}.projects-grid{grid-template-columns:1fr}.projects-grid .product{grid-template-columns:120px 1fr 70px}}
 @media(max-width:520px){.hero-buttons{flex-direction:column}.home-hero{padding-top:30px;padding-bottom:30px}.about-home{flex-direction:column}.projects-grid .product{grid-template-columns:105px 1fr 66px}.projects-grid .project-art{height:120px}}
+#iren-auth-gate ~ *{ } body{ } 
 </style>
 </head>
 <body>
+
+<style>
+#iren-auth-gate{position:fixed;inset:0;z-index:999999;background:#061b16;display:flex;align-items:center;justify-content:center;padding:18px;font-family:Arial,sans-serif}
+#iren-auth-gate[hidden]{display:none}
+.iren-auth-card{width:min(440px,100%);background:#fffdf9;border-radius:22px;padding:24px;box-shadow:0 20px 70px rgba(0,0,0,.35)}
+.iren-auth-card h1{margin:0 0 6px;color:#087d6d;font-size:28px}.iren-auth-card p{color:#66716d;margin:0 0 18px}
+.iren-auth-card input{width:100%;padding:13px 14px;margin:7px 0;border:1px solid #d8d2c9;border-radius:12px;font-size:16px;box-sizing:border-box}
+.iren-auth-card button{width:100%;padding:13px;margin-top:9px;border:0;border-radius:12px;background:#087d6d;color:#fff;font-weight:700;font-size:16px;cursor:pointer}
+.iren-auth-card button.alt{background:#eef5f2;color:#087d6d}.iren-auth-card .err{color:#b42318;font-size:14px;min-height:20px;margin-top:8px}.iren-auth-card .small{font-size:12px;color:#777;margin-top:14px;line-height:1.45}
+#iren-auth-tabs{display:flex;gap:8px;margin-bottom:12px}.iren-auth-tabs button{margin:0}.iren-auth-tabs button.alt.active{background:#087d6d;color:#fff}
+#iren-auth-loading{color:#fff;font-size:17px}
+.iren-user-badge{position:fixed;right:12px;top:12px;z-index:99999;background:#fff;border-radius:12px;padding:8px 10px;box-shadow:0 4px 18px rgba(0,0,0,.15);font:12px Arial;color:#087d6d;display:none}
+.iren-user-badge button{border:0;background:none;color:#b42318;font-weight:700;margin-left:8px;cursor:pointer}
+#iren-admin-link{display:none}
+</style>
+<div id="iren-auth-gate">
+  <div id="iren-auth-loading">Connecting securely…</div>
+  <div class="iren-auth-card" id="iren-auth-card" style="display:none">
+    <h1>IREN Investors Limited</h1>
+    <p>Secure account access</p>
+    <div id="iren-auth-tabs">
+      <button id="iren-login-tab" class="alt active" onclick="showAuthMode('login')">Login</button>
+      <button id="iren-register-tab" class="alt" onclick="showAuthMode('register')">Create account</button>
+    </div>
+    <div id="iren-register-fields" style="display:none">
+      <input id="iren-name" placeholder="Full name">
+      <input id="iren-phone" placeholder="Phone number">
+    </div>
+    <input id="iren-email" type="email" autocomplete="email" placeholder="Email address">
+    <input id="iren-password" type="password" autocomplete="current-password" placeholder="Password">
+    <input id="iren-password2" type="password" autocomplete="new-password" placeholder="Confirm password" style="display:none">
+    <button onclick="submitAuth()">Login</button>
+    <button class="alt" onclick="resetPassword()" id="iren-reset">Forgot password?</button>
+    <div class="err" id="iren-auth-error"></div>
+    <div class="small">Your password is handled by the authentication service. Financial balances are stored server-side; this page does not use browser localStorage as the account database.</div>
+  </div>
+</div>
+<div class="iren-user-badge" id="iren-user-badge"><span id="iren-user-email"></span><button onclick="logoutIren()">Logout</button></div>
+
 <aside class="sidebar">
 <div class="side-brand"><div class="iren-word">IREN</div><div>INVESTORS LIMITED</div></div>
 <nav class="side-nav">
@@ -307,6 +347,7 @@ body{background:#000!important;color:#f4f8fa!important}
 <div class="wallet-item"><div><span>Account status</span><br/><strong>Active account</strong></div><span>✓</span></div>
 <div class="wallet-item"><div><span>Referral</span><br/><strong>Available</strong></div><span>›</span></div>
 <div class="wallet-item"><div><span>Support</span><br/><strong>Contact support</strong></div><span>›</span></div>
+<div class="wallet-item" id="iren-admin-link"><div><span>Administrator</span><br/><strong>Open Admin Dashboard</strong></div><button onclick="location.href='admin.html'" style="padding:9px 12px;border:0;border-radius:10px;background:#087d6d;color:#fff;font-weight:700">Open</button></div>
 </div></section>
 </div>
 </div>
@@ -444,5 +485,187 @@ function showRechargeNumbers(){openModal('deposit')}
 sync();
 projectGroup('A IREN',document.querySelector('.project-filter .project-bar-btn'));
 </script>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+<script>
+(function(){
+  const cfg=window.IREN_CONFIG||{};
+  const gate=document.getElementById('iren-auth-gate');
+  const loading=document.getElementById('iren-auth-loading');
+  const card=document.getElementById('iren-auth-card');
+  const err=document.getElementById('iren-auth-error');
+  let mode='login';
+  let client=null;
+  let currentUser=null;
+  let currentProfile=null;
+
+  function showError(msg){ if(err) err.textContent=msg||''; }
+  window.showAuthMode=function(next){
+    mode=next;
+    document.getElementById('iren-register-fields').style.display=next==='register'?'block':'none';
+    document.getElementById('iren-password2').style.display=next==='register'?'block':'none';
+    document.getElementById('iren-reset').style.display=next==='login'?'block':'none';
+    document.querySelector('#iren-auth-tabs button:first-child').classList.toggle('active',next==='login');
+    document.querySelector('#iren-auth-tabs button:nth-child(2)').classList.toggle('active',next==='register');
+    document.querySelector('#iren-auth-card > button').textContent=next==='login'?'Login':'Create account';
+    showError('');
+  };
+
+  function configured(){
+    return cfg.supabaseUrl && cfg.supabaseAnonKey &&
+      !cfg.supabaseUrl.includes('PASTE_YOUR') && !cfg.supabaseAnonKey.includes('PASTE_YOUR');
+  }
+
+  async function profileFor(uid){
+    const {data,error}=await client.from('profiles').select('*').eq('id',uid).single();
+    if(error) throw error;
+    return data;
+  }
+
+  function balanceFromTx(tx){
+    return tx.reduce((sum,x)=>{
+      if(x.status!=='approved') return sum;
+      if(['deposit','earning','adjustment'].includes(x.type)) return sum+Number(x.amount_ugx||0);
+      if(['withdrawal','purchase'].includes(x.type)) return sum-Number(x.amount_ugx||0);
+      return sum;
+    },0);
+  }
+
+  window.sync=async function(){
+    if(!currentUser) return;
+    const [{data:tx,error:te},{data:ups,error:ue}]=await Promise.all([
+      client.from('transactions').select('id,type,amount_ugx,status,project_id,reference,note,created_at,projects(name)').eq('user_id',currentUser.id).order('created_at',{ascending:false}),
+      client.from('user_projects').select('id,status,purchase_amount_ugx,purchased_at,expires_at,projects(name,price_ugx)').eq('user_id',currentUser.id).order('created_at',{ascending:false})
+    ]);
+    if(te) throw te; if(ue) throw ue;
+    state.balance=balanceFromTx(tx||[]);
+    state.transactions=(tx||[]).map(x=>({
+      id:x.id,type:({deposit:'Deposit',withdrawal:'Withdrawal',purchase:'Project Purchase',earning:'Earning',adjustment:'Adjustment'})[x.type]||x.type,
+      amount:Number(x.amount_ugx||0),status:(x.status||'').replace(/^./,c=>c.toUpperCase()),
+      project:x.projects?.name||'',date:new Date(x.created_at).toLocaleString()
+    }));
+    state.investments=(ups||[]).map(x=>({
+      id:x.id,name:x.projects?.name||'Project',price:Number(x.purchase_amount_ugx||0),
+      status:x.status,date:new Date(x.purchased_at).toLocaleString()
+    }));
+    if(typeof renderTransactions==='function') renderTransactions();
+    if(typeof renderPortfolio==='function') renderPortfolio();
+    const totalInvested=state.investments.reduce((a,x)=>a+x.price,0);
+    ['walletBalance','homeWalletBalance'].forEach(id=>{const el=document.getElementById(id);if(el)el.textContent=money(state.balance)});
+    ['portfolioValue','portfolioTabValue'].forEach(id=>{const el=document.getElementById(id);if(el)el.textContent=money(totalInvested)});
+    const pv=document.getElementById('projectActivity'); if(pv) pv.textContent=state.investments.length+' active';
+  };
+
+  window.save=function(){ return Promise.resolve(); };
+
+  window.submitAction=async function(){
+    const n=Math.floor(Number(document.getElementById('amount').value));
+    if(!n||n<1) return alert('Enter a valid amount.');
+    try{
+      let result;
+      if(action==='withdraw'){
+        result=await client.rpc('request_withdrawal',{p_amount:n,p_note:'Withdrawal requested from website'});
+      }else{
+        result=await client.rpc('request_deposit',{p_amount:n,p_reference:null,p_note:'Deposit declared by user; awaiting verification'});
+      }
+      if(result.error) throw result.error;
+      alert(action==='withdraw'
+        ? 'Withdrawal request submitted. It will remain pending until reviewed.'
+        : 'Deposit request submitted. Your balance will change only after the deposit is verified.');
+      closeModal(); await sync();
+    }catch(e){ alert(e.message||'Could not submit request.'); }
+  };
+
+  window.invest=async function(name){
+    try{
+      const {data:p,error:pe}=await client.from('projects').select('id,name,price_ugx').eq('name',name).eq('active',true).single();
+      if(pe) throw pe;
+      const {error}=await client.rpc('purchase_project',{p_project_id:p.id});
+      if(error) throw error;
+      alert(name+' has been added to your portfolio.');
+      await sync();
+      tab('portfolio',document.querySelector('.side-nav button:nth-child(3)'));
+    }catch(e){alert(e.message||'Purchase could not be completed.');}
+  };
+
+  window.buyProject=window.invest;
+
+  window.resetPassword=async function(){
+    const email=document.getElementById('iren-email').value.trim();
+    if(!email) return showError('Enter your email first.');
+    const {error}=await client.auth.resetPasswordForEmail(email,{redirectTo:location.origin+location.pathname});
+    if(error) return showError(error.message);
+    showError('Password reset email sent. Check your inbox.');
+  };
+
+  window.logoutIren=async function(){ if(client) await client.auth.signOut(); };
+
+  async function enter(user){
+    currentUser=user;
+    currentProfile=await profileFor(user.id);
+    if(currentProfile.status!=='active'){
+      await client.auth.signOut();
+      throw new Error('This account is suspended.');
+    }
+    gate.style.display='none';
+    document.getElementById('iren-user-badge').style.display='block';
+    document.getElementById('iren-user-email').textContent=user.email||'Account';
+    const adminLink=document.getElementById('iren-admin-link');
+    if(adminLink) adminLink.style.display=currentProfile.role==='admin'?'block':'none';
+    await sync();
+  }
+
+  window.submitAuth=async function(){
+    showError('');
+    const email=document.getElementById('iren-email').value.trim();
+    const password=document.getElementById('iren-password').value;
+    try{
+      if(!email||!password) throw new Error('Enter your email and password.');
+      if(mode==='register'){
+        const name=document.getElementById('iren-name').value.trim();
+        const phone=document.getElementById('iren-phone').value.trim();
+        const p2=document.getElementById('iren-password2').value;
+        if(!name) throw new Error('Enter your full name.');
+        if(password.length<8) throw new Error('Use a password with at least 8 characters.');
+        if(password!==p2) throw new Error('Passwords do not match.');
+        const {data,error}=await client.auth.signUp({email,password,options:{data:{full_name:name,phone:phone}}});
+        if(error) throw error;
+        if(data.user && !data.session){
+          showError('Account created. Check your email to confirm the account, then log in.');
+          return;
+        }
+        await enter(data.user);
+      }else{
+        const {data,error}=await client.auth.signInWithPassword({email,password});
+        if(error) throw error;
+        await enter(data.user);
+      }
+    }catch(e){showError(e.message||'Authentication failed.');}
+  };
+
+  async function init(){
+    if(!configured()){
+      loading.style.display='none'; card.style.display='block';
+      showError('Setup required: open config.js and add your Supabase Project URL and publishable key.');
+      return;
+    }
+    client=window.supabase.createClient(cfg.supabaseUrl,cfg.supabaseAnonKey);
+    try{
+      const {data}=await client.auth.getSession();
+      loading.style.display='none'; card.style.display='block';
+      if(data.session) await enter(data.session.user);
+    }catch(e){loading.style.display='none';card.style.display='block';showError(e.message);}
+    client.auth.onAuthStateChange(async (_event,session)=>{
+      if(session && !currentUser){try{await enter(session.user)}catch(e){showError(e.message)}}
+      if(!session){currentUser=null;currentProfile=null;gate.style.display='flex';document.getElementById('iren-user-badge').style.display='none';}
+    });
+  }
+  window.irenSupabase=()=>client;
+  window.irenProfile=()=>currentProfile;
+  init();
+})();
+</script>
+
 </body>
 </html>
