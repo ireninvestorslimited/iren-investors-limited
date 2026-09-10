@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>IREN Admin Dashboard</title>
+<style>
+body{margin:0;background:#f4f7f5;color:#18221f;font-family:Arial,sans-serif}.wrap{max-width:1200px;margin:auto;padding:20px}
+header{background:#063d34;color:#fff;border-radius:18px;padding:20px;display:flex;justify-content:space-between;align-items:center;gap:12px}
+button{border:0;border-radius:10px;padding:10px 13px;font-weight:700;cursor:pointer}button.primary{background:#087d6d;color:#fff}button.danger{background:#b42318;color:#fff}button.light{background:#eaf1ef;color:#087d6d}
+nav{display:flex;gap:8px;flex-wrap:wrap;margin:16px 0}.panel{background:#fff;border-radius:16px;padding:18px;box-shadow:0 5px 20px rgba(0,0,0,.06);margin-bottom:16px}.tab{display:none}.tab.active{display:block}
+table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;padding:10px;border-bottom:1px solid #e5e9e7;vertical-align:top}input,select,textarea{width:100%;box-sizing:border-box;padding:10px;border:1px solid #ccd6d2;border-radius:9px;margin:4px 0 10px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}.card{border:1px solid #e4e9e7;border-radius:12px;padding:12px}.muted{color:#68736f;font-size:13px}.pill{display:inline-block;padding:4px 8px;border-radius:99px;background:#edf5f2;color:#087d6d;font-size:12px}.error{color:#b42318}.ok{color:#087d6d}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>window.IREN_CONFIG={supabaseUrl:"https://hrleaypiejkcuuzbxode.supabase.co",supabaseAnonKey:"sb_publishable_ADDYeNSW63IEubf0kd3Wow_dLJOKaRp"};</script>
+</head>
+<body>
+<div class="wrap">
+<header><div><h1 style="margin:0">IREN Admin</h1><div class="muted" style="color:#c8ded8">Secure administration</div></div><div><button class="light" onclick="location.href='index.html'">Website</button> <button class="danger" onclick="logout()">Logout</button></div></header>
+<div id="status" class="panel">Checking admin access…</div>
+<div id="app" style="display:none">
+<nav>
+<button class="primary" onclick="showTab('overview')">Overview</button>
+<button class="light" onclick="showTab('transactions')">Transactions</button>
+<button class="light" onclick="showTab('users')">Users</button>
+<button class="light" onclick="showTab('projects')">Projects</button>
+<button class="light" onclick="showTab('settings')">Site Settings</button>
+</nav>
+<section id="overview" class="tab active"><div class="grid" id="stats"></div></section>
+<section id="transactions" class="tab"><div class="panel"><h2>Pending transactions</h2><div id="pending"></div></div><div class="panel"><h2>Recent transactions</h2><div id="recent"></div></div></section>
+<section id="users" class="tab"><div class="panel"><h2>Users</h2><div id="usersTable"></div></div></section>
+<section id="projects" class="tab"><div class="panel"><h2>Project catalogue</h2><div id="projectsTable"></div></div></section>
+<section id="settings" class="tab"><div class="panel"><h2>Announcement</h2><textarea id="announcement" rows="4"></textarea><button class="primary" onclick="saveAnnouncement()">Save announcement</button><span id="settingsMsg"></span></div></section>
+</div>
+</div>
+<script>
+let sb=null, me=null;
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const money=n=>'UGX '+Number(n||0).toLocaleString('en-UG');
+function showTab(id){document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));document.getElementById(id).classList.add('active')}
+async function logout(){if(sb)await sb.auth.signOut();location.href='index.html'}
+async function init(){
+  const c=window.IREN_CONFIG||{};
+  if(!c.supabaseUrl||c.supabaseUrl.includes('PASTE_YOUR')) return document.getElementById('status').innerHTML='<span class="error">Configure config.js first.</span>';
+  sb=window.supabase.createClient(c.supabaseUrl,c.supabaseAnonKey);
+  const {data,error}=await sb.auth.getSession();
+  if(error||!data.session) return location.href='index.html';
+  const user=data.session.user;
+  const p=await sb.from('profiles').select('*').eq('email',user.email).single();
+  if(p.error||!p.data||p.data.role!=='admin'||p.data.is_active!==true)
+    return document.getElementById('status').innerHTML='<span class="error">Admin access denied. Your profile must have role = admin and is_active = true.</span>';
+  me=p.data;
+  document.getElementById('status').innerHTML='<span class="ok">Signed in as administrator: '+esc(me.name||user.email)+'</span>';
+  document.getElementById('app').style.display='block';
+  await refresh();
+}
+async function refresh(){await Promise.all([loadStats(),loadTransactions(),loadUsers(),loadProjects(),loadSettings()])}
+async function loadStats(){
+ const [{count:uc},{count:pc},{count:tc},{data:pending}]=await Promise.all([
+  sb.from('profiles').select('*',{count:'exact',head:true}),
+  sb.from('projects').select('*',{count:'exact',head:true}).eq('active',true),
+  sb.from('transactions').select('*',{count:'exact',head:true}),
+  sb.from('transactions').select('amount_ugx').eq('status','pending')
+ ]);
+ const pendingTotal=(pending||[]).reduce((a,x)=>a+Number(x.amount_ugx||0),0);
+ document.getElementById('stats').innerHTML=[['Users',uc||0],['Active projects',pc||0],['Transactions',tc||0],['Pending value',money(pendingTotal)]].map(x=>'<div class="card"><div class="muted">'+esc(x[0])+'</div><h2>'+esc(x[1])+'</h2></div>').join('');
+}
+async function loadTransactions(){
+ const {data,error}=await sb.from('transactions').select('id,user_id,type,amount_ugx,status,reference,note,created_at,profiles(full_name,phone),projects(name)').order('created_at',{ascending:false}).limit(100);
+ if(error){document.getElementById('recent').innerHTML='<span class="error">'+esc(error.message)+'</span>';return}
+ const rows=data||[];
+ const pend=rows.filter(x=>x.status==='pending');
+ document.getElementById('pending').innerHTML=pend.length?'<table><tr><th>User</th><th>Type</th><th>Amount</th><th>Reference</th><th>Action</th></tr>'+pend.map(x=>'<tr><td>'+esc(x.profiles?.full_name||x.user_id)+'<br><span class="muted">'+esc(x.profiles?.phone||'')+'</span></td><td>'+esc(x.type)+(x.projects?.name?' — '+esc(x.projects.name):'')+'</td><td>'+money(x.amount_ugx)+'</td><td>'+esc(x.reference||'—')+'</td><td><button class="primary" onclick="reviewTx(\''+x.id+'\',\'approved\')">Approve</button> <button class="danger" onclick="reviewTx(\''+x.id+'\',\'rejected\')">Reject</button></td></tr>').join('')+'</table>':'<div class="muted">No pending transactions.</div>';
+ document.getElementById('recent').innerHTML='<table><tr><th>Date</th><th>User</th><th>Type</th><th>Amount</th><th>Status</th></tr>'+rows.slice(0,50).map(x=>'<tr><td>'+new Date(x.created_at).toLocaleString()+'</td><td>'+esc(x.profiles?.full_name||x.user_id)+'</td><td>'+esc(x.type)+'</td><td>'+money(x.amount_ugx)+'</td><td><span class="pill">'+esc(x.status)+'</span></td></tr>').join('')+'</table>';
+}
+async function reviewTx(id,status){const {error}=await sb.rpc('admin_set_transaction_status',{p_transaction_id:id,p_status:status,p_note:'Reviewed by administrator'});if(error)return alert(error.message);await refresh()}
+async function loadUsers(){
+  const {data,error}=await sb.from('profiles').select('*').order('created_at',{ascending:false});
+  if(error)return document.getElementById('usersTable').innerHTML='<span class="error">'+esc(error.message)+'</span>';
+  document.getElementById('usersTable').innerHTML='<table><tr><th>Name</th><th>Email</th><th>Role</th><th>Active</th><th>Joined</th><th>Action</th></tr>'+
+  (data||[]).map(x=>'<tr><td>'+esc(x.name)+'</td><td>'+esc(x.email)+'</td><td>'+esc(x.role)+'</td><td>'+esc(x.is_active?'Active':'Inactive')+'</td><td>'+new Date(x.created_at).toLocaleDateString()+'</td><td>'+
+  (x.id===me.id?'Current admin':'<button class="'+(x.is_active?'danger':'primary')+'" onclick="setUserStatus('+x.id+','+(x.is_active?'false':'true')+')">'+(x.is_active?'Deactivate':'Activate')+'</button>')+
+  '</td></tr>').join('')+'</table>';
+}
+async function setUserStatus(id,is_active){
+  const {error}=await sb.from('profiles').update({is_active}).eq('id',id);
+  if(error)return alert(error.message);
+  await loadUsers();
+}=await sb.from('profiles').update({status}).eq('id',id);if(error)return alert(error.message);await loadUsers()}
+async function loadProjects(){
+ const {data,error}=await sb.from('projects').select('*').order('group_name').order('price_ugx');
+ if(error)return document.getElementById('projectsTable').innerHTML='<span class="error">'+esc(error.message)+'</span>';
+ document.getElementById('projectsTable').innerHTML='<table><tr><th>Project</th><th>Group</th><th>Price</th><th>Daily</th><th>Total</th><th>Days</th><th>Active</th><th>Save</th></tr>'+(data||[]).map(x=>'<tr><td><input id="n_'+x.id+'" value="'+esc(x.name)+'"></td><td><input id="g_'+x.id+'" value="'+esc(x.group_name)+'"></td><td><input type="number" id="p_'+x.id+'" value="'+x.price_ugx+'"></td><td><input type="number" id="d_'+x.id+'" value="'+x.daily_income_ugx+'"></td><td><input type="number" id="t_'+x.id+'" value="'+x.total_income_ugx+'"></td><td><input type="number" id="v_'+x.id+'" value="'+x.validity_days+'"></td><td><input type="checkbox" id="a_'+x.id+'" '+(x.active?'checked':'')+'></td><td><button class="primary" onclick="saveProject(\''+x.id+'\')">Save</button></td></tr>').join('')+'</table>';
+}
+async function saveProject(id){
+ const payload={name:document.getElementById('n_'+id).value.trim(),group_name:document.getElementById('g_'+id).value.trim(),price_ugx:Number(document.getElementById('p_'+id).value),daily_income_ugx:Number(document.getElementById('d_'+id).value),total_income_ugx:Number(document.getElementById('t_'+id).value),validity_days:Number(document.getElementById('v_'+id).value),active:document.getElementById('a_'+id).checked,updated_at:new Date().toISOString()};
+ const {error}=await sb.from('projects').update(payload).eq('id',id);if(error)return alert(error.message);alert('Project saved.');await loadProjects();
+}
+async function loadSettings(){const {data}=await sb.from('site_settings').select('key,value').eq('key','announcement').maybeSingle();if(data)document.getElementById('announcement').value=data.value}
+async function saveAnnouncement(){const value=document.getElementById('announcement').value;const {error}=await sb.from('site_settings').upsert({key:'announcement',value,updated_by:me.id,updated_at:new Date().toISOString()});document.getElementById('settingsMsg').textContent=error?' '+error.message:' Saved';}
+init();
+</script>
+</body>
+</html>
